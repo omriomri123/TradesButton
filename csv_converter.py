@@ -1,3 +1,4 @@
+import datetime
 import os
 import streamlit as st
 import pandas as pd
@@ -21,9 +22,22 @@ def process_csv(csv_file):
     return analyzed_df
 
 
+def download_dataframe_as_csv(df, name):
+    file_name = name.split('.')[0]
+    suggested_name = f'{file_name}_weekly.csv'
+    home_dir = os.path.expanduser("~")
+    # Check the operating system and determine the download folder path
+    if os.name == 'posix':  # Linux, macOS
+        download_folder_path = os.path.join(home_dir, 'Downloads')
+    elif os.name == 'nt':  # Windows
+        download_folder_path = os.path.join(home_dir, 'Downloads')
+
+    df.to_csv(f'{download_folder_path}\{suggested_name}', index=False)
+
+
 def extract_important_data(csv_file):
-    # content = csv_file.getvalue().decode('utf-8')
-    csv_reader = csv.reader(csv_file)
+    content = csv_file.getvalue().decode('utf-8')
+    csv_reader = csv.reader(io.StringIO(content))
     lst_of_TS_trades = []
     lst_of_mark_to_market = []
     arrived_TS_trades = False
@@ -119,7 +133,7 @@ def df_parse_date(df):
 
 
 def df_weekly_profit(df: pd.DataFrame):
-    df['IsSaturday'] = (df[CONSTS['DateTab']].dt.dayofweek == 5).astype(int)
+    df['IsSaturday'] = (df[CONSTS['DateTab']].dt.dayofweek == 6).astype(int)
     df['Weekly Profit'] = df[CONSTS['ProfitTab']].rolling(
         7, min_periods=1).sum() * df['IsSaturday']
 
@@ -150,18 +164,18 @@ def df_add_deals(df, TS_df):
 
 def fill_gap_days(df):
     start_date = df.head(1).reset_index().loc[0, CONSTS['DateTab']]
-    end_date = df.tail(1).reset_index().loc[0, CONSTS['DateTab']]
+    end_date = datetime.datetime.today()
     date_range = pd.date_range(start_date, end_date)
     missing_dates = set(date_range) - set(CONSTS['DateTab'])
     new_rows = pd.DataFrame(
         {CONSTS['DateTab']: list(missing_dates), CONSTS['ProfitTab']: 0})
     df = df[[CONSTS['DateTab'], CONSTS['ProfitTab']]]
     df = pd.concat([df, new_rows], ignore_index=True)
+    return df
 
 
 def analyze_df(df, TS_df, active_strategy, symbol):
     df_parse_date(df)
-    # df[CONSTS["DateTab"]] = df[CONSTS["DateTab"]].dt.strftime('%m/%d/%Y')
 
     df_dollar_to_float(df, CONSTS['ProfitTab'])
 
@@ -174,7 +188,7 @@ def analyze_df(df, TS_df, active_strategy, symbol):
     df[CONSTS['ProfitTab']] *= df['Sign']
 
     #  Adding gap days with 0 value in profit
-    fill_gap_days(df)
+    df = fill_gap_days(df)
 
     #  Adding the cum sum column:
     df = df.groupby(
@@ -224,7 +238,7 @@ def display(file):
         st.subheader(f"{file.name}:")
 
         dataframe = process_csv(file)
-
+        download_dataframe_as_csv(dataframe, file.name)
         st.write(dataframe)
         st.download_button(
             label="Download data as CSV",
@@ -233,19 +247,26 @@ def display(file):
             mime='text/csv',
         )
 
+        return dataframe
+
     except Exception as ex:
         st.write(f"Couldn't parse file! Reason - {ex}")
 
 
 def streamlit_ui():
     st.set_page_config(page_title="Csv Convert", layout="wide")
-
+    df_list = []
     with st.sidebar:
         uploaded_file = st.file_uploader(
             "Choose a CSV file", accept_multiple_files=True)
+        if st.button(label="Download all CSV's"):
+            for df in df_list:
+                file_name = list(df.keys())[0]
+                download_dataframe_as_csv(df[file_name], file_name)
+
     if uploaded_file:
         for file in uploaded_file:
-            display(file)
+            df_list.append({file.name: display(file)})
 
 
 def main():
