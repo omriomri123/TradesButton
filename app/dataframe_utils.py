@@ -1,7 +1,7 @@
 import pandas as pd
 import yaml
 
-with open('settings.yaml') as f:
+with open(r'settings.yaml') as f:
     settings = yaml.safe_load(f)
 
 

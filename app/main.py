@@ -7,7 +7,7 @@ import csv
 import os
 import io
 
-with open('settings.yaml') as f:
+with open(r'settings.yaml') as f:
     settings = yaml.safe_load(f)
 
 
@@ -83,7 +83,8 @@ def extract_important_data(csv_file):
             if "(On)" in row[0]:
                 active_strategy = row[0]
 
-    mark_to_market_df = dataframe_utils.convert_data_to_df(lst_of_mark_to_market)
+    mark_to_market_df = dataframe_utils.convert_data_to_df(
+        lst_of_mark_to_market)
     mark_to_market_df = mark_to_market_df[::-1].reset_index()
     mark_to_market_df = mark_to_market_df.drop("index", axis=1)
 
