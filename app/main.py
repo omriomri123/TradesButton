@@ -1,20 +1,17 @@
-import datetime
-import os
 import streamlit as st
 import pandas as pd
+import dataframe_utils
+import datetime
+import yaml
 import csv
+import os
 import io
 
-CONSTS = {
-    'ProfitTab': "Net Profit",
-    'CumulativeTab': "Cumulative Profit",
-    'DateTab': "Period",
-    'DealsFromTS': "Shares/Ctrts - Profit/Loss",
-    'CummulativeDeals': "Total Deals"
-}
+with open('settings.yaml') as f:
+    settings = yaml.safe_load(f)
 
 
-def process_csv(csv_file):
+def process_csv_to_df(csv_file):
     mark_to_market_df, TS_trades_df, active_strategy, symbol = extract_important_data(
         csv_file)
     analyzed_df = analyze_df(
@@ -26,6 +23,7 @@ def download_dataframe_as_csv(df, name):
     file_name = name.split('.')[0]
     suggested_name = f'{file_name}_weekly.csv'
     home_dir = os.path.expanduser("~")
+
     # Check the operating system and determine the download folder path
     if os.name == 'posix':  # Linux, macOS
         download_folder_path = os.path.join(home_dir, 'Downloads')
@@ -38,6 +36,7 @@ def download_dataframe_as_csv(df, name):
 def extract_important_data(csv_file):
     content = csv_file.getvalue().decode('utf-8')
     csv_reader = csv.reader(io.StringIO(content))
+
     lst_of_TS_trades = []
     lst_of_mark_to_market = []
     arrived_TS_trades = False
@@ -84,57 +83,18 @@ def extract_important_data(csv_file):
             if "(On)" in row[0]:
                 active_strategy = row[0]
 
-    # st.write(lst_of_mark_to_market[:25])
-    mark_to_market_df = convert_data_to_df(lst_of_mark_to_market)
+    mark_to_market_df = dataframe_utils.convert_data_to_df(lst_of_mark_to_market)
     mark_to_market_df = mark_to_market_df[::-1].reset_index()
     mark_to_market_df = mark_to_market_df.drop("index", axis=1)
-    TS_trades_df = convert_data_to_df(lst_of_TS_trades)
+
+    TS_trades_df = dataframe_utils.convert_data_to_df(lst_of_TS_trades)
+
     return mark_to_market_df, TS_trades_df, active_strategy, symbol
 
 
-def convert_data_to_df(important_data):
-    headers = important_data[0]
-    dict_to_df = {i: [] for i in headers}
-    for row in important_data[1:]:
-        for ind, cell in enumerate(row):
-            dict_to_df[headers[ind]].append(cell)
-
-    if "" in dict_to_df:
-        dict_to_df.pop("")
-    raw_df = pd.DataFrame.from_dict(dict_to_df)
-    return raw_df
-
-
-def df_dollar_to_float(df, col_name):
-    df[col_name] = df[col_name].str.extract(
-        r'([\d\.\,]+)').replace(",", "")
-    df[col_name] = df[col_name
-                      ].str.replace(",", "").astype(float)
-
-
-def df_float_to_dollar(df, col_name):
-    df[col_name] = df[col_name].apply(
-        lambda x: '0' if x == 0 else f'{x:.2f}$' if x != int(x) else f'{x:.0f}$')
-
-
-def df_parse_date(df):
-    date_formats = ['%m/%d/%Y']
-
-    def try_parsing_date(value):
-        for fmt in date_formats:
-            try:
-                return pd.to_datetime(value, format=fmt)
-            except ValueError:
-                pass
-        return pd.NaT
-
-    df[CONSTS['DateTab']] = df[CONSTS['DateTab']].apply(
-        lambda x: try_parsing_date(x))
-
-
 def df_weekly_profit(df: pd.DataFrame):
-    df['IsSaturday'] = (df[CONSTS['DateTab']].dt.dayofweek == 6).astype(int)
-    df['Weekly Profit'] = df[CONSTS['ProfitTab']].rolling(
+    df['IsSaturday'] = (df[settings['DateTab']].dt.dayofweek == 6).astype(int)
+    df['Weekly Profit'] = df[settings['ProfitTab']].rolling(
         7, min_periods=1).sum() * df['IsSaturday']
 
     df['Total Weekly Profit'] = df['Weekly Profit'].cumsum()
@@ -143,59 +103,59 @@ def df_weekly_profit(df: pd.DataFrame):
 
 
 def df_add_deals(df, TS_df):
-    TS_df = TS_df[["Date/Time", CONSTS['DealsFromTS']]]
-    TS_df = TS_df[(TS_df[CONSTS['DealsFromTS']] != "1") &
-                  (TS_df[CONSTS['DealsFromTS']] != "n/a")]
+    TS_df = TS_df[["Date/Time", settings['DealsFromTS']]]
+    TS_df = TS_df[(TS_df[settings['DealsFromTS']] != "1") &
+                  (TS_df[settings['DealsFromTS']] != "n/a")]
     df["Period"] = pd.to_datetime(df["Period"])
     TS_df["Date/Time"] = pd.to_datetime(TS_df["Date/Time"])
     df = pd.merge(df, TS_df, "left", left_on="Period", right_on="Date/Time")
     df = df.drop(columns="Date/Time")
 
-    df['Sign'] = df[CONSTS['DealsFromTS']].astype(str).apply(
+    df['Sign'] = df[settings['DealsFromTS']].astype(str).apply(
         lambda x: -1 if '(' in x else 1)
-    df_dollar_to_float(df, CONSTS['DealsFromTS'])
-    df[CONSTS['DealsFromTS']] *= df['Sign']
-    df[CONSTS['DealsFromTS']] = df[CONSTS['DealsFromTS']].fillna(0)
-    df = df.rename(columns={CONSTS['DealsFromTS']: 'Deals'})
+    dataframe_utils.df_dollar_to_float(df, settings['DealsFromTS'])
+    df[settings['DealsFromTS']] *= df['Sign']
+    df[settings['DealsFromTS']] = df[settings['DealsFromTS']].fillna(0)
+    df = df.rename(columns={settings['DealsFromTS']: 'Deals'})
     df = df.drop(columns="Sign")
     df['Total Deals'] = df['Deals'].cumsum()
     return df
 
 
 def fill_gap_days(df):
-    start_date = df.head(1).reset_index().loc[0, CONSTS['DateTab']]
+    start_date = df.head(1).reset_index().loc[0, settings['DateTab']]
     end_date = datetime.datetime.today()
     date_range = pd.date_range(start_date, end_date)
-    missing_dates = set(date_range) - set(CONSTS['DateTab'])
+    missing_dates = set(date_range) - set(settings['DateTab'])
     new_rows = pd.DataFrame(
-        {CONSTS['DateTab']: list(missing_dates), CONSTS['ProfitTab']: 0})
-    df = df[[CONSTS['DateTab'], CONSTS['ProfitTab']]]
+        {settings['DateTab']: list(missing_dates), settings['ProfitTab']: 0})
+    df = df[[settings['DateTab'], settings['ProfitTab']]]
     df = pd.concat([df, new_rows], ignore_index=True)
     return df
 
 
 def analyze_df(df, TS_df, active_strategy, symbol):
-    df_parse_date(df)
+    dataframe_utils.df_parse_date(df)
 
-    df_dollar_to_float(df, CONSTS['ProfitTab'])
+    dataframe_utils.df_dollar_to_float(df, settings['ProfitTab'])
 
     df['Sign'] = df['% Profitable'].apply(
         lambda x: -1 if not '100.00%' in x else 1)
 
-    df.loc[df[CONSTS['ProfitTab']] ==
-           1, CONSTS['ProfitTab']] = 0
+    df.loc[df[settings['ProfitTab']] ==
+           1, settings['ProfitTab']] = 0
 
-    df[CONSTS['ProfitTab']] *= df['Sign']
+    df[settings['ProfitTab']] *= df['Sign']
 
     #  Adding gap days with 0 value in profit
     df = fill_gap_days(df)
 
-    #  Adding the cum sum column:
+    #  Adding the cumulative sum column:
     df = df.groupby(
-        df[CONSTS['DateTab']].dt.date)[CONSTS['ProfitTab']].sum().reset_index()
-    df[CONSTS['CumulativeTab']] = df[CONSTS['ProfitTab']
-                                     ].cumsum()
-    df = df.rename(columns={CONSTS['CumulativeTab']: 'Total Profit'})
+        df[settings['DateTab']].dt.date)[settings['ProfitTab']].sum().reset_index()
+    df[settings['CumulativeTab']] = df[settings['ProfitTab']
+                                       ].cumsum()
+    df = df.rename(columns={settings['CumulativeTab']: 'Total Profit'})
 
     #  Adding Strategy:
     df.insert(0, 'Strategy', active_strategy.replace("(On)", ""))
@@ -210,34 +170,11 @@ def analyze_df(df, TS_df, active_strategy, symbol):
     return df
 
 
-def color_cell(v):
-    if "-" in str(v):
-        return 'color:red;'
-    if "0$" == str(v):
-        return 'opacity: 20%;'
-    return 'color:green;'
-
-
-def style_positive(v, props=''):
-    return props if int(v) > 0 else None
-
-
-def style_zero(v, props=''):
-    return props if "-" in str(v) else None
-
-
-def style_df(df):
-    df = df.set_index([CONSTS["DateTab"]])
-    df = df[[CONSTS["ProfitTab"], "Total Profit"]]
-    df = df.style.applymap(color_cell)
-    return df
-
-
-def display(file):
+def process_file(file):
     try:
         st.subheader(f"{file.name}:")
 
-        dataframe = process_csv(file)
+        dataframe = process_csv_to_df(file)
         download_dataframe_as_csv(dataframe, file.name)
         st.write(dataframe)
         st.download_button(
@@ -254,7 +191,8 @@ def display(file):
 
 
 def streamlit_ui():
-    st.set_page_config(page_title="Csv Convert", layout="wide")
+    st.set_page_config(page_title=settings['title'], layout="wide")
+
     df_list = []
     with st.sidebar:
         uploaded_file = st.file_uploader(
@@ -266,7 +204,7 @@ def streamlit_ui():
 
     if uploaded_file:
         for file in uploaded_file:
-            df_list.append({file.name: display(file)})
+            df_list.append({file.name: process_file(file)})
 
 
 def main():
